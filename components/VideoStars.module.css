@@ -110,30 +110,21 @@
   transform-origin: bottom center;
 }
 
-/* Narrow screens: a full-bleed sheet. The background is fully opaque and the
-   radius, border and blur are dropped, otherwise the card underneath shows
-   through the panel and around its corners. */
-.dialog[data-placement="screen"] {
-  top: 0;
-  left: 0;
+/* Snapped over the neighbouring card. The surface is fully opaque and the
+   radius matches .video-card exactly, so the card underneath shows neither
+   through the panel nor around its corners. */
+.dialog[data-snap="card"] {
   display: flex;
-  width: 100%;
-  height: 100%;
-  max-height: none;
-  min-height: 0;
+  min-height: var(--popover-min-height, 0);
   flex-direction: column;
   border: 0;
-  border-radius: 0;
+  border-radius: 10px;
   background: var(--surface-raised);
-  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
-           max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
-  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  transform-origin: center;
 }
 
-.dialog[data-placement="screen"] .profileLink {
+.dialog[data-snap="card"] .profileLink {
   flex: 1;
   align-content: center;
 }

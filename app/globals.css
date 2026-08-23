@@ -2409,21 +2409,15 @@ select:focus-visible {
 
   /* Sign in used to be hidden here, which left Register as the only visible
      way in; returning visitors had to open Register and find the link inside.
-     Both fit once the sign-in control drops its pill. */
-  .sign-in-button {
-    border: 0;
-    background: transparent;
-    padding: 0 4px;
-    font-size: 0.82rem;
-  }
-
+     It keeps the desktop pill so the two controls still read as a pair -
+     only the padding tightens, to fit the narrow row. */
+  .sign-in-button,
   .register-button {
-    padding: 0 13px;
-    font-size: 0.76rem;
+    padding: 0 11px;
   }
 
   .guest-actions {
-    gap: 2px;
+    gap: 6px;
     margin-left: 0;
   }
 

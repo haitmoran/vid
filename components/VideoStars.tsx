@@ -27,10 +27,10 @@ type VideoStarsProps = {
   onStarKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
 };
 
-type PopoverPlacement = "upper-right" | "upper-left" | "below" | "above" | "screen";
+type PopoverPlacement = "upper-right" | "upper-left" | "below" | "above";
 
-/** Below this width the preview takes over the whole viewport. */
-const FULLSCREEN_MAX_WIDTH = 700;
+/** At or above this width the tray sits beside the card instead of over one. */
+const SIDE_TRAY_MIN_WIDTH = 700;
 
 type PopoverPosition = {
   top: number;
@@ -38,9 +38,43 @@ type PopoverPosition = {
   width: number;
   maxHeight: number;
   placement: PopoverPlacement;
-  /** Set for the full-screen sheet so it fills the viewport height. */
+  /** Set when the tray is snapped over a neighbouring card, so it fills that
+   *  card exactly rather than leaving slivers of it showing. */
   minHeight?: number;
 };
+
+/**
+ * Finds the card directly above or below `card` in the same grid column.
+ * DOM order is not enough: at two-column widths the next sibling sits beside
+ * the card rather than under it, so candidates are matched on geometry.
+ */
+function neighbouringCard(
+  card: HTMLElement | null,
+  direction: "below" | "above",
+): DOMRect | null {
+  const parent = card?.parentElement;
+  if (!card || !parent) return null;
+
+  const base = card.getBoundingClientRect();
+  let best: DOMRect | null = null;
+
+  for (const sibling of Array.from(parent.children)) {
+    if (sibling === card || !sibling.classList.contains("video-card")) continue;
+    const rect = sibling.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    if (Math.abs(rect.left - base.left) > base.width * 0.5) continue;
+
+    if (direction === "below") {
+      if (rect.top < base.bottom - 1) continue;
+      if (!best || rect.top < best.top) best = rect;
+    } else {
+      if (rect.bottom > base.top + 1) continue;
+      if (!best || rect.bottom > best.bottom) best = rect;
+    }
+  }
+
+  return best;
+}
 
 function positionPreviewTray(
   trigger: HTMLButtonElement,
@@ -62,20 +96,7 @@ function positionPreviewTray(
   const maximumHeight = Math.max(1, window.innerHeight - safeTop - gutter);
   const dialogHeight = Math.min(measuredHeight, maximumHeight);
 
-  // Narrow screens: take over the viewport entirely. Anything less leaves the
-  // card showing through and around the panel.
-  if (window.innerWidth < FULLSCREEN_MAX_WIDTH) {
-    return {
-      top: 0,
-      left: 0,
-      width: window.innerWidth,
-      maxHeight: window.innerHeight,
-      minHeight: window.innerHeight,
-      placement: "screen",
-    };
-  }
-
-  if (window.innerWidth >= FULLSCREEN_MAX_WIDTH) {
+  if (window.innerWidth >= SIDE_TRAY_MIN_WIDTH) {
     const top = Math.max(
       safeTop,
       Math.min(
@@ -119,8 +140,25 @@ function positionPreviewTray(
   );
   const availableBelow = Math.max(1, window.innerHeight - cardBounds.bottom - gap - gutter);
   const availableAbove = Math.max(1, cardBounds.top - gap - safeTop);
+  const placement: PopoverPlacement = availableBelow >= availableAbove ? "below" : "above";
 
-  if (availableBelow >= availableAbove) {
+  // Stacked layouts: cover the adjacent card exactly, edge to edge.
+  const neighbour = card ? neighbouringCard(card, placement) : null;
+  if (neighbour) {
+    const top = Math.max(safeTop, neighbour.top);
+    const bottom = Math.min(window.innerHeight - gutter, neighbour.bottom);
+    const height = Math.max(1, bottom - top);
+    return {
+      top,
+      left: neighbour.left,
+      width: neighbour.width,
+      maxHeight: height,
+      minHeight: height,
+      placement,
+    };
+  }
+
+  if (placement === "below") {
     return {
       top: cardBounds.bottom + gap,
       left,
@@ -202,12 +240,6 @@ export function VideoStars({
     updatePopoverPosition();
     window.requestAnimationFrame(() => loveButtonRef.current?.focus());
 
-    // The sheet covers the viewport on narrow screens, so the page behind it
-    // must not keep scrolling underneath.
-    const fullscreen = window.innerWidth < FULLSCREEN_MAX_WIDTH;
-    const previousOverflow = document.body.style.overflow;
-    if (fullscreen) document.body.style.overflow = "hidden";
-
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -270,7 +302,6 @@ export function VideoStars({
     window.addEventListener("resize", scheduleReposition, { passive: true });
     window.addEventListener("scroll", scheduleReposition, { capture: true, passive: true });
     return () => {
-      if (fullscreen) document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handleOutsidePointer);
       window.removeEventListener("resize", scheduleReposition);
@@ -331,6 +362,7 @@ export function VideoStars({
             className={styles.dialog}
             data-placement={popoverPosition.placement}
             role="dialog"
+            data-snap={popoverPosition.minHeight ? "card" : undefined}
             aria-labelledby={`${dialogId}-title`}
             aria-describedby={`${dialogId}-description`}
             style={{
