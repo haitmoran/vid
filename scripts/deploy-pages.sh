@@ -43,8 +43,18 @@ GITHUB_PAGES=true npm run build
 # --- publish ---------------------------------------------------------------
 echo "==> Syncing out/ into the $BRANCH worktree"
 git worktree remove --force "$WORKTREE" 2>/dev/null || true
-git fetch origin "$BRANCH"
-git worktree add "$WORKTREE" "$BRANCH"
+rm -rf "$WORKTREE"
+
+if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  git fetch origin "$BRANCH"
+  git worktree add "$WORKTREE" "$BRANCH"
+else
+  # Fresh repository: start gh-pages with no history rather than failing.
+  echo "==> origin has no $BRANCH yet; creating it"
+  git worktree add --detach "$WORKTREE" HEAD
+  git -C "$WORKTREE" checkout --orphan "$BRANCH"
+  git -C "$WORKTREE" rm -rf . >/dev/null 2>&1 || true
+fi
 
 # --exclude .git protects the worktree's own git pointer file.
 rsync -a --delete --exclude '.git' out/ "$WORKTREE/"
@@ -55,7 +65,7 @@ if git diff --cached --quiet; then
   echo "==> No changes to publish"
 else
   git commit -m "Deploy $SHA"
-  git push origin "$BRANCH"
+  git push -u origin "$BRANCH"
   echo "==> Published $SHA"
 fi
 
