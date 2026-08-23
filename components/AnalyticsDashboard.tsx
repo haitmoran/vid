@@ -43,9 +43,13 @@ function formatNumber(value: number): string {
 }
 
 function formatDay(day: string): string {
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
-    new Date(`${day}T00:00:00Z`),
-  );
+  // Buckets are UTC days on the Worker; formatting them in the viewer's local
+  // zone labelled every bar with the previous day west of UTC.
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
 }
 
 function StatCard({ label, value, note }: { label: string; value: number | string; note: string }) {
@@ -69,8 +73,10 @@ function RankedList({ title, items, emptyText }: { title: string; items: RankedI
       </div>
       {items.length ? (
         <ol className="analytics-ranked-list">
-          {items.slice(0, 5).map((item) => (
-            <li key={item.label}>
+          {items.slice(0, 5).map((item, position) => (
+            // Two rows can share a label (for example the same video title
+            // logged under different ids), so position keeps the keys unique.
+            <li key={`${position}-${item.label}`}>
               <div>
                 <span className="analytics-ranked-list__label" title={item.label}>{item.label}</span>
                 <strong>{formatNumber(item.value)}</strong>

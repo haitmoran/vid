@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { StarPortrait } from "@/components/StarPortrait";
-import { getStarBySlug, getStarSlugsForVideo, starProfiles } from "@/data/stars";
-import { videos } from "@/data/videos";
+import { StarPortrait, StarPortraitSprite } from "@/components/StarPortrait";
+import { getStarBySlug, starProfiles } from "@/data/stars";
+import { getVideosForStar } from "@/data/starVideoIndex";
+import { basePath } from "@/lib/basePath";
 import styles from "./page.module.css";
-
-const basePath = process.env.GITHUB_PAGES === "true" ? "/kinet-video-aggregator" : "";
 
 type StarPageProps = {
   params: Promise<{ slug: string }>;
@@ -35,12 +34,11 @@ export default async function StarPage({ params }: StarPageProps) {
   const star = getStarBySlug(slug);
   if (!star) notFound();
 
-  const relatedVideos = videos
-    .filter((video) => getStarSlugsForVideo(video.id).includes(star.slug))
-    .slice(0, 6);
+  const relatedVideos = getVideosForStar(star.slug).slice(0, 6);
 
   return (
     <main className={styles.page}>
+      <StarPortraitSprite slugs={[star.slug]} />
       <header className={styles.header}>
         <Link className={styles.brand} href="/?tab=stars#catalog" aria-label="Kinet stars">
           <span className={styles.brandMark} aria-hidden="true"><span /></span>

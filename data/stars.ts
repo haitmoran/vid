@@ -267,16 +267,29 @@ export function getStarBySlug(slug: string): StarProfile | undefined {
   return profilesBySlug.get(slug);
 }
 
+// Both lookups run once per card render and once per star per filter pass, so
+// the parsing and profile resolution are cached per video id.
+const slugsByVideoId = new Map<string, readonly [string, string]>();
+const starsByVideoId = new Map<string, readonly [StarProfile, StarProfile]>();
+
 export function getStarSlugsForVideo(videoId: string): readonly [string, string] {
+  const cached = slugsByVideoId.get(videoId);
+  if (cached) return cached;
+
   const numberedId = /^video-(\d+)$/.exec(videoId);
   const sourceIndex = numberedId
     ? (Math.max(1, Number(numberedId[1])) - 1) % sourceVideoStarPairs.length
     : stableNumber(videoId) % sourceVideoStarPairs.length;
 
-  return sourceVideoStarPairs[sourceIndex];
+  const pair = sourceVideoStarPairs[sourceIndex];
+  slugsByVideoId.set(videoId, pair);
+  return pair;
 }
 
 export function getStarsForVideo(videoId: string): readonly [StarProfile, StarProfile] {
+  const cached = starsByVideoId.get(videoId);
+  if (cached) return cached;
+
   const [firstSlug, secondSlug] = getStarSlugsForVideo(videoId);
   const first = profilesBySlug.get(firstSlug);
   const second = profilesBySlug.get(secondSlug);
@@ -285,5 +298,7 @@ export function getStarsForVideo(videoId: string): readonly [StarProfile, StarPr
     throw new Error(`Invalid star assignment for video "${videoId}".`);
   }
 
-  return [first, second];
+  const pair: readonly [StarProfile, StarProfile] = [first, second];
+  starsByVideoId.set(videoId, pair);
+  return pair;
 }

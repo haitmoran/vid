@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
+import { basePath } from "@/lib/basePath";
 import "./globals.css";
-
-const basePath = process.env.GITHUB_PAGES === "true" ? "/kinet-video-aggregator" : "";
 
 const themeBootScript = `
   try {

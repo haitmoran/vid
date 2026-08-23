@@ -14,7 +14,27 @@ type PreferencesPopoverProps = {
   view: "videos" | "stars";
   preferences: DisplayPreferences;
   onChange: (preferences: DisplayPreferences) => void;
+  tvMode: boolean;
 };
+
+/**
+ * The column preference is only read by the grids at 64rem and above, or in TV
+ * mode; narrower layouts pin the column count to the breakpoint. Offering the
+ * control where it cannot do anything just gives the visitor a dead switch.
+ */
+function useColumnPreferenceApplies(tvMode: boolean): boolean {
+  const [wideEnough, setWideEnough] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 64rem)");
+    const sync = () => setWideEnough(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  return tvMode || wideEnough;
+}
 
 const metadataOptions: Array<{ key: keyof VideoMetadataPreferences; label: string }> = [
   { key: "stars", label: "Featured stars" },
@@ -43,10 +63,11 @@ function SettingsIcon() {
   );
 }
 
-export function PreferencesPopover({ view, preferences, onChange }: PreferencesPopoverProps) {
+export function PreferencesPopover({ view, preferences, onChange, tvMode }: PreferencesPopoverProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  const columnPreferenceApplies = useColumnPreferenceApplies(tvMode);
 
   useEffect(() => {
     if (!open) return;
@@ -137,27 +158,28 @@ export function PreferencesPopover({ view, preferences, onChange }: PreferencesP
             </button>
           </header>
 
-          <fieldset className={styles.group}>
-            <legend>{view === "stars" ? "Stars per row" : "Videos per row"}</legend>
-            <p>Applied on desktop and TV screens.</p>
-            <div className={styles.segmented}>
-              {([3, 4, 5, 6] as const).map((columns) => (
-                <button
-                  key={columns}
-                  type="button"
-                  className={(view === "stars" ? preferences.starColumns : preferences.columns) === columns ? styles.selected : ""}
-                  aria-pressed={(view === "stars" ? preferences.starColumns : preferences.columns) === columns}
-                  onClick={() => onChange(
-                    view === "stars"
-                      ? { ...preferences, starColumns: columns as DisplayPreferences["starColumns"] }
-                      : { ...preferences, columns: columns as DisplayPreferences["columns"] },
-                  )}
-                >
-                  {columns}
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          {columnPreferenceApplies && (
+            <fieldset className={styles.group}>
+              <legend>{view === "stars" ? "Stars per row" : "Videos per row"}</legend>
+              <div className={styles.segmented}>
+                {([3, 4, 5, 6] as const).map((columns) => (
+                  <button
+                    key={columns}
+                    type="button"
+                    className={(view === "stars" ? preferences.starColumns : preferences.columns) === columns ? styles.selected : ""}
+                    aria-pressed={(view === "stars" ? preferences.starColumns : preferences.columns) === columns}
+                    onClick={() => onChange(
+                      view === "stars"
+                        ? { ...preferences, starColumns: columns as DisplayPreferences["starColumns"] }
+                        : { ...preferences, columns: columns as DisplayPreferences["columns"] },
+                    )}
+                  >
+                    {columns}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
           <fieldset className={styles.group}>
             <legend>Text size</legend>

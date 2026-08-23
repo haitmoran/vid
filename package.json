@@ -1,5 +1,5 @@
 {
-  "name": "kinet-video-aggregator",
+  "name": "kinet",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -22,5 +22,12 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "typescript": "latest"
-  }
+  },
+  "browserslist": [
+    "chrome >= 68",
+    "edge >= 79",
+    "firefox >= 68",
+    "safari >= 12",
+    "samsung >= 10"
+  ]
 }

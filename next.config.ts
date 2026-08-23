@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
+import { REPO_BASE_PATH } from "./lib/basePath";
 
 const isGitHubPages = process.env.GITHUB_PAGES === "true";
-const basePath = isGitHubPages ? "/kinet-video-aggregator" : "";
+const basePath = isGitHubPages ? REPO_BASE_PATH : "";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,

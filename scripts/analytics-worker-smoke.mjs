@@ -51,7 +51,7 @@ class MockDatabase {
     return [
       { results: [{ views: 12, visitors: 5, sessions: 7, video_opens: 4 }] },
       { results: [{ day: "2026-08-20", views: 12, visitors: 5 }] },
-      { results: [{ label: "/kinet-video-aggregator/", value: 12 }] },
+      { results: [{ label: "/k/", value: 12 }] },
       { results: [{ label: "Sintel", value: 4 }] },
       { results: [{ label: "Direct", value: 9 }] },
       { results: [{ label: "IL", value: 7 }] },
@@ -94,7 +94,7 @@ const collection = await worker.fetch(request("/v1/collect", {
     eventType: "page_view",
     visitorId: "12345678-1234-1234-1234-123456789abc",
     sessionId: "98765432-1234-1234-1234-123456789abc",
-    path: "/kinet-video-aggregator/",
+    path: "/k/",
     referrer: "example.com",
     device: "Desktop",
   }),

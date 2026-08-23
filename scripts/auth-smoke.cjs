@@ -97,7 +97,58 @@ async function run() {
     /secure analytics sign-in/i,
   );
 
+  await assertStorageFailuresAreSurvivable();
+
   process.stdout.write("Authentication smoke test passed.\n");
+}
+
+// Reading account storage must never throw: an unreadable or corrupt value
+// used to propagate out of getSession() during mount and blank the whole site.
+async function assertStorageFailuresAreSurvivable() {
+  const originalLocal = global.window.localStorage;
+  const originalSession = global.window.sessionStorage;
+
+  const withStorage = (localStorage, sessionStorage) => {
+    global.window.localStorage = localStorage;
+    global.window.sessionStorage = sessionStorage;
+  };
+
+  try {
+    // Corrupt JSON blob left behind by an older or interrupted write.
+    const corrupt = createStorage();
+    corrupt.setItem("kinet-users-v1", "{not json");
+    const activeSession = createStorage();
+    activeSession.setItem("kinet-session-v1", "moran");
+    withStorage(corrupt, activeSession);
+    assert.equal(auth.getSession(), null, "corrupt account JSON must sign the visitor out, not throw");
+
+    // Right shape, wrong type.
+    const wrongType = createStorage();
+    wrongType.setItem("kinet-users-v1", '{"oops":true}');
+    withStorage(wrongType, activeSession);
+    assert.equal(auth.getSession(), null, "non-array account storage must not throw");
+
+    // Storage present but blocked (private browsing, disabled site data).
+    const blocked = {
+      getItem() { throw new Error("The operation is insecure."); },
+      setItem() { throw new Error("The operation is insecure."); },
+      removeItem() { throw new Error("The operation is insecure."); },
+    };
+    withStorage(blocked, blocked);
+    assert.equal(auth.getSession(), null, "blocked storage must not throw");
+    assert.deepEqual([...auth.getLikedVideoIds("moran")], []);
+    assert.deepEqual([...auth.getLovedStarSlugs("moran")], []);
+    auth.signOut();
+
+    // A full quota must not break the like and love buttons.
+    const full = createStorage();
+    full.setItem = () => { throw new Error("Quota exceeded."); };
+    withStorage(full, createStorage());
+    auth.saveLikedVideoIds("moran", new Set(["video-001"]));
+    auth.saveLovedStarSlugs("moran", new Set(["aria-sol"]));
+  } finally {
+    withStorage(originalLocal, originalSession);
+  }
 }
 
 run().catch((error) => {

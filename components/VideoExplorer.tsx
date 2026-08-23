@@ -4,6 +4,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useInsertionEffect,
   useMemo,
   useRef,
   useState,
@@ -13,9 +14,11 @@ import {
 import { AuthDialog, type AuthMode } from "@/components/AuthDialog";
 import { PreferencesPopover } from "@/components/PreferencesPopover";
 import { StarDirectory, type StarDirectoryEntry } from "@/components/StarDirectory";
+import { StarPortraitSprite } from "@/components/StarPortrait";
 import { VideoCard, type VideoCardAction } from "@/components/VideoCard";
 import { categories, moods, videos } from "@/data/videos";
-import { getStarSlugsForVideo, starProfiles } from "@/data/stars";
+import { starProfiles } from "@/data/stars";
+import { getStarVideoSummary } from "@/data/starVideoIndex";
 import {
   applyDisplayPreferences,
   DEFAULT_DISPLAY_PREFERENCES,
@@ -34,6 +37,7 @@ import {
   type SessionUser,
 } from "@/lib/localAuth";
 import { clearAnalyticsOwnerSession } from "@/lib/analyticsClient";
+import { viewportWidth } from "@/lib/viewport";
 
 type Theme = "light" | "dark";
 type MainTab = "Trending" | "Latest" | "Categories" | "Stars" | "Profile";
@@ -116,7 +120,7 @@ function CloseIcon() {
 
 function columnCount(tvMode: boolean, preferredColumns: DisplayPreferences["columns"]): number {
   if (tvMode) return preferredColumns;
-  const width = window.innerWidth;
+  const width = viewportWidth();
   if (width < 480) return 1;
   if (width < 768) return 2;
   if (width < 1024) return 3;
@@ -128,6 +132,21 @@ function regionForLocation(location: string): (typeof starRegions)[number] {
   if (/South Korea/.test(location)) return "Asia";
   if (/Nigeria/.test(location)) return "Africa";
   return "North America";
+}
+
+/**
+ * Returns a callback with a permanently stable identity that always sees the
+ * latest render's values. Card handlers must not change identity between
+ * renders or memoised cards re-render for no reason.
+ */
+function useStableCallback<Args extends unknown[], Result>(
+  callback: (...args: Args) => Result,
+): (...args: Args) => Result {
+  const latest = useRef(callback);
+  useInsertionEffect(() => {
+    latest.current = callback;
+  });
+  return useCallback((...args: Args) => latest.current(...args), []);
 }
 
 export function VideoExplorer() {
@@ -164,8 +183,17 @@ export function VideoExplorer() {
     DEFAULT_DISPLAY_PREFERENCES,
   );
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const [focusedAction, setFocusedAction] = useState<VideoCardAction>("open");
+  // Focus position is tracked in a ref so that ordinary pointer/keyboard focus
+  // never re-renders the grid. Only TV mode needs it in render output, to drive
+  // the roving tabindex, so only TV mode mirrors it into state.
+  const focusRef = useRef<{ index: number; action: VideoCardAction }>({
+    index: 0,
+    action: "open",
+  });
+  const [tvFocus, setTvFocus] = useState<{ index: number; action: VideoCardAction }>({
+    index: 0,
+    action: "open",
+  });
   const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [likedVideoIds, setLikedVideoIds] = useState<Set<string>>(new Set());
   const [lovedStarSlugs, setLovedStarSlugs] = useState<Set<string>>(new Set());
@@ -176,6 +204,20 @@ export function VideoExplorer() {
   const [requestedStarSlug, setRequestedStarSlug] = useState<string | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+
+  const tvModeRef = useRef(tvMode);
+  tvModeRef.current = tvMode;
+
+  const setFocus = useCallback((index: number, action: VideoCardAction) => {
+    focusRef.current = { index, action };
+    if (tvModeRef.current) setTvFocus({ index, action });
+  }, []);
+
+  // Entering TV mode has to adopt whatever the ref already tracked, since
+  // focus moves made outside TV mode deliberately skip the state update.
+  useEffect(() => {
+    if (tvMode) setTvFocus({ ...focusRef.current });
+  }, [tvMode]);
 
   const closeFilters = useCallback((restoreFocus = true) => {
     setFilterOpen(false);
@@ -312,8 +354,7 @@ export function VideoExplorer() {
     const matching = videosMatchingFilters.filter((video) => {
       const matchesLiked =
         activeTab !== "Profile" || Boolean(currentUser && likedVideoIds.has(video.id));
-      const haystack = `${video.title} ${video.creator} ${video.platform} ${video.category} ${video.tags.join(" ")} ${video.mood}`.toLowerCase();
-      return matchesLiked && (!deferredQuery || haystack.includes(deferredQuery));
+      return matchesLiked && (!deferredQuery || video.searchText.includes(deferredQuery));
     });
 
     if (videoSort === "Newest") return [...matching].sort((a, b) => b.publishedYear - a.publishedYear || b.likeCount - a.likeCount);
@@ -325,16 +366,14 @@ export function VideoExplorer() {
 
   const allStarEntries = useMemo(
     () => starProfiles.flatMap<StarDirectoryEntry>((profile) => {
-      const relatedVideos = videos.filter((video) =>
-        getStarSlugsForVideo(video.id).includes(profile.slug),
-      );
-      if (!relatedVideos.length) return [];
+      const summary = getStarVideoSummary(profile.slug);
+      if (!summary.appearances) return [];
 
       return [{
         profile,
-        appearances: relatedVideos.length,
-        totalLikes: relatedVideos.reduce((total, video) => total + video.likeCount, 0),
-        newestYear: Math.max(...relatedVideos.map((video) => video.publishedYear)),
+        appearances: summary.appearances,
+        totalLikes: summary.totalLikes,
+        newestYear: summary.newestYear,
       }];
     }),
     [],
@@ -343,9 +382,7 @@ export function VideoExplorer() {
   const filteredStars = useMemo(() => {
     const entries = allStarEntries.filter((entry) => {
       const { profile, appearances } = entry;
-      const relatedVideos = videos.filter((video) =>
-        getStarSlugsForVideo(video.id).includes(profile.slug),
-      );
+      const relatedVideos = getStarVideoSummary(profile.slug).videos;
       const matchesRole = selectedStarRoles.length === 0 || selectedStarRoles.includes(profile.role);
       const profileRegion = regionForLocation(profile.location);
       const matchesRegion = selectedStarRegions.length === 0 || selectedStarRegions.includes(profileRegion);
@@ -359,9 +396,7 @@ export function VideoExplorer() {
       const matchesSearch =
         !deferredQuery ||
         profileText.includes(deferredQuery) ||
-        relatedVideos.some((video) =>
-          `${video.title} ${video.creator} ${video.tags.join(" ")}`.toLowerCase().includes(deferredQuery),
-        );
+        relatedVideos.some((video) => video.searchText.includes(deferredQuery));
       return matchesSearch && matchesRole && matchesRegion && matchesSpecialty && matchesAppearances;
     });
 
@@ -376,13 +411,10 @@ export function VideoExplorer() {
     () => allStarEntries.filter(({ profile }) => {
       if (!lovedStarSlugs.has(profile.slug)) return false;
       if (!deferredQuery) return true;
-      const relatedVideos = videos.filter((video) =>
-        getStarSlugsForVideo(video.id).includes(profile.slug),
-      );
+      const relatedVideos = getStarVideoSummary(profile.slug).videos;
       const profileText = `${profile.name} ${profile.role} ${profile.location} ${profile.specialties.join(" ")}`.toLowerCase();
-      return profileText.includes(deferredQuery) || relatedVideos.some((video) =>
-        `${video.title} ${video.creator} ${video.tags.join(" ")}`.toLowerCase().includes(deferredQuery),
-      );
+      return profileText.includes(deferredQuery)
+        || relatedVideos.some((video) => video.searchText.includes(deferredQuery));
     }),
     [allStarEntries, deferredQuery, lovedStarSlugs],
   );
@@ -395,8 +427,7 @@ export function VideoExplorer() {
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-    setFocusedIndex(0);
-    setFocusedAction("open");
+    setFocus(0, "open");
     pendingGridFocusRef.current = null;
   }, [activeTab, deferredQuery, durationFilter, eraFilter, moodFilter, selectedCategories, sourceFilter, starAppearanceFilter, starSort, selectedStarRegions, selectedStarRoles, selectedStarSpecialties, videoSort]);
 
@@ -448,8 +479,7 @@ export function VideoExplorer() {
     window.localStorage.setItem("kinet-tv", String(nextValue));
 
     if (nextValue) {
-      setFocusedIndex(0);
-      setFocusedAction("open");
+      setFocus(0, "open");
       window.setTimeout(() => {
         if (activeTab === "Stars" || (activeTab === "Profile" && lovedStarEntries.length > 0)) {
           catalogRef.current?.querySelector<HTMLElement>('[data-star-card-index="0"]')?.focus();
@@ -508,7 +538,7 @@ export function VideoExplorer() {
     saveDisplayPreferences(preferences, activeTab === "Stars" ? "stars" : "videos");
 
     if (displayPreferences.metadata.stars && !preferences.metadata.stars) {
-      setFocusedAction("open");
+      setFocus(focusRef.current.index, "open");
     }
   };
 
@@ -569,7 +599,7 @@ export function VideoExplorer() {
     }
   };
 
-  const toggleLike = (videoId: string): boolean => {
+  const toggleLike = useStableCallback((videoId: string): boolean => {
     if (!currentUser) {
       openAuth("login", videoId);
       return false;
@@ -581,9 +611,9 @@ export function VideoExplorer() {
     saveLikedVideoIds(currentUser.normalizedUsername, nextLikes);
     setLikedVideoIds(nextLikes);
     return true;
-  };
+  });
 
-  const toggleStarLove = (starSlug: string): boolean => {
+  const toggleStarLove = useStableCallback((starSlug: string): boolean => {
     if (!currentUser) {
       openAuth("login", null, starSlug);
       return false;
@@ -595,7 +625,7 @@ export function VideoExplorer() {
     saveLovedStarSlugs(currentUser.normalizedUsername, nextLovedStars);
     setLovedStarSlugs(nextLovedStars);
     return true;
-  };
+  });
 
   const handleSignOut = () => {
     signOut();
@@ -617,11 +647,14 @@ export function VideoExplorer() {
 
   const isManager = currentUser?.normalizedUsername === MANAGER_USERNAME;
 
-  const handleGridKeyDown = (
-    event: KeyboardEvent<HTMLElement>,
-    index: number,
-    action: VideoCardAction,
-  ) => {
+  // One stable handler shared by every card control. Index and action come
+  // from the element's own data attributes rather than a per-card closure,
+  // which is what lets the cards stay memoised.
+  const handleCardKeyDown = useStableCallback((event: KeyboardEvent<HTMLElement>) => {
+    const index = Number(event.currentTarget.dataset.videoIndex);
+    const action = event.currentTarget.dataset.cardAction as VideoCardAction;
+    if (!Number.isInteger(index) || !action) return;
+
     const normalizedKey =
       ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", "OK", "Select", "Accept"].includes(event.key)
         ? event.key
@@ -691,8 +724,7 @@ export function VideoExplorer() {
     if (targetIndex < 0 || targetIndex >= filteredVideos.length) return;
     if (targetIndex === index && targetAction === action) return;
 
-    setFocusedIndex(targetIndex);
-    setFocusedAction(targetAction);
+    setFocus(targetIndex, targetAction);
 
     if (targetIndex >= visibleVideos.length) {
       pendingGridFocusRef.current = { index: targetIndex, action: targetAction };
@@ -710,7 +742,7 @@ export function VideoExplorer() {
     );
     nextControl?.focus();
     nextControl?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-  };
+  });
 
   useEffect(() => {
     const enterGridWithArrows = (event: globalThis.KeyboardEvent) => {
@@ -767,11 +799,12 @@ export function VideoExplorer() {
         return;
       }
 
-      const safeAction = displayPreferences.metadata.stars || !focusedAction.startsWith("star-")
-        ? focusedAction
+      const { index: lastIndex, action: lastAction } = focusRef.current;
+      const safeAction = displayPreferences.metadata.stars || !lastAction.startsWith("star-")
+        ? lastAction
         : "open";
       const nextControl = gridRef.current?.querySelector<HTMLElement>(
-        `[data-video-index="${Math.min(focusedIndex, visibleVideos.length - 1)}"][data-card-action="${safeAction}"]`,
+        `[data-video-index="${Math.min(lastIndex, visibleVideos.length - 1)}"][data-card-action="${safeAction}"]`,
       ) ?? gridRef.current?.querySelector<HTMLElement>(
         '[data-video-index="0"][data-card-action="open"]',
       );
@@ -781,10 +814,11 @@ export function VideoExplorer() {
 
     window.addEventListener("keydown", enterGridWithArrows);
     return () => window.removeEventListener("keydown", enterGridWithArrows);
-  }, [activeTab, authOpen, displayPreferences.metadata.stars, filterOpen, filteredStars.length, focusedAction, focusedIndex, lovedStarEntries.length, visibleVideos.length]);
+  }, [activeTab, authOpen, displayPreferences.metadata.stars, filterOpen, filteredStars.length, lovedStarEntries.length, visibleVideos.length]);
 
   return (
     <div className="site-frame">
+      <StarPortraitSprite />
       <header className="topbar">
         <a className="brand" href="#catalog" aria-label="Kinet home">
           <span className="brand__mark" aria-hidden="true"><span /></span>
@@ -920,6 +954,7 @@ export function VideoExplorer() {
                     view={activeTab === "Stars" ? "stars" : "videos"}
                     preferences={displayPreferences}
                     onChange={updateDisplayPreferences}
+                    tvMode={tvMode}
                   />
                 </>
               )}
@@ -1090,8 +1125,10 @@ export function VideoExplorer() {
                         "[data-video-index][data-card-action]",
                       );
                       if (!control) return;
-                      setFocusedIndex(Number(control.dataset.videoIndex));
-                      setFocusedAction(control.dataset.cardAction as VideoCardAction);
+                      setFocus(
+                        Number(control.dataset.videoIndex),
+                        control.dataset.cardAction as VideoCardAction,
+                      );
                     }}
                   >
                     {visibleVideos.map((video, index) => (
@@ -1100,34 +1137,14 @@ export function VideoExplorer() {
                         video={video}
                         index={index}
                         liked={likedVideoIds.has(video.id)}
-                        onToggleLike={() => toggleLike(video.id)}
+                        onToggleLike={toggleLike}
                         lovedStarSlugs={lovedStarSlugs}
                         onToggleStarLove={toggleStarLove}
                         metadata={displayPreferences.metadata}
                         priority={index < 6}
-                        tabIndex={
-                          tvMode && !(focusedIndex === index && focusedAction === "open")
-                            ? -1
-                            : 0
-                        }
-                        likeTabIndex={
-                          tvMode && !(focusedIndex === index && focusedAction === "like")
-                            ? -1
-                            : 0
-                        }
-                        starTabIndexes={[
-                          tvMode && !(focusedIndex === index && focusedAction === "star-0") ? -1 : 0,
-                          tvMode && !(focusedIndex === index && focusedAction === "star-1") ? -1 : 0,
-                        ]}
-                        onKeyDown={(event) => handleGridKeyDown(event, index, "open")}
-                        onLikeKeyDown={(event) => handleGridKeyDown(event, index, "like")}
-                        onStarKeyDown={(event) =>
-                          handleGridKeyDown(
-                            event,
-                            index,
-                            event.currentTarget.dataset.cardAction as VideoCardAction,
-                          )
-                        }
+                        tvMode={tvMode}
+                        focusedAction={tvMode && tvFocus.index === index ? tvFocus.action : null}
+                        onCardKeyDown={handleCardKeyDown}
                       />
                     ))}
                   </div>

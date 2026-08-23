@@ -27,7 +27,10 @@ type VideoStarsProps = {
   onStarKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
 };
 
-type PopoverPlacement = "upper-right" | "upper-left" | "below" | "above";
+type PopoverPlacement = "upper-right" | "upper-left" | "below" | "above" | "screen";
+
+/** Below this width the preview takes over the whole viewport. */
+const FULLSCREEN_MAX_WIDTH = 700;
 
 type PopoverPosition = {
   top: number;
@@ -35,6 +38,8 @@ type PopoverPosition = {
   width: number;
   maxHeight: number;
   placement: PopoverPlacement;
+  /** Set for the full-screen sheet so it fills the viewport height. */
+  minHeight?: number;
 };
 
 function positionPreviewTray(
@@ -57,7 +62,20 @@ function positionPreviewTray(
   const maximumHeight = Math.max(1, window.innerHeight - safeTop - gutter);
   const dialogHeight = Math.min(measuredHeight, maximumHeight);
 
-  if (window.innerWidth >= 700) {
+  // Narrow screens: take over the viewport entirely. Anything less leaves the
+  // card showing through and around the panel.
+  if (window.innerWidth < FULLSCREEN_MAX_WIDTH) {
+    return {
+      top: 0,
+      left: 0,
+      width: window.innerWidth,
+      maxHeight: window.innerHeight,
+      minHeight: window.innerHeight,
+      placement: "screen",
+    };
+  }
+
+  if (window.innerWidth >= FULLSCREEN_MAX_WIDTH) {
     const top = Math.max(
       safeTop,
       Math.min(
@@ -150,6 +168,8 @@ export function VideoStars({
     placement: "upper-right",
   });
 
+  const repositionFrameRef = useRef<number | null>(null);
+
   const updatePopoverPosition = useCallback(() => {
     const trigger = triggerRefs.current[activeIndexRef.current];
     if (trigger) {
@@ -158,6 +178,16 @@ export function VideoStars({
       );
     }
   }, []);
+
+  // Scroll and resize fire far faster than frames; measuring and re-rendering
+  // on every event made scrolling with a star preview open janky.
+  const scheduleReposition = useCallback(() => {
+    if (repositionFrameRef.current !== null) return;
+    repositionFrameRef.current = window.requestAnimationFrame(() => {
+      repositionFrameRef.current = null;
+      updatePopoverPosition();
+    });
+  }, [updatePopoverPosition]);
 
   const closeProfile = useCallback((restoreFocus = true) => {
     setActiveStar(null);
@@ -171,6 +201,12 @@ export function VideoStars({
 
     updatePopoverPosition();
     window.requestAnimationFrame(() => loveButtonRef.current?.focus());
+
+    // The sheet covers the viewport on narrow screens, so the page behind it
+    // must not keep scrolling underneath.
+    const fullscreen = window.innerWidth < FULLSCREEN_MAX_WIDTH;
+    const previousOverflow = document.body.style.overflow;
+    if (fullscreen) document.body.style.overflow = "hidden";
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -231,15 +267,20 @@ export function VideoStars({
 
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("pointerdown", handleOutsidePointer);
-    window.addEventListener("resize", updatePopoverPosition);
-    window.addEventListener("scroll", updatePopoverPosition, true);
+    window.addEventListener("resize", scheduleReposition, { passive: true });
+    window.addEventListener("scroll", scheduleReposition, { capture: true, passive: true });
     return () => {
+      if (fullscreen) document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handleOutsidePointer);
-      window.removeEventListener("resize", updatePopoverPosition);
-      window.removeEventListener("scroll", updatePopoverPosition, true);
+      window.removeEventListener("resize", scheduleReposition);
+      window.removeEventListener("scroll", scheduleReposition, true);
+      if (repositionFrameRef.current !== null) {
+        window.cancelAnimationFrame(repositionFrameRef.current);
+        repositionFrameRef.current = null;
+      }
     };
-  }, [activeStar, closeProfile, updatePopoverPosition]);
+  }, [activeStar, closeProfile, scheduleReposition, updatePopoverPosition]);
 
   const openProfile = (star: StarProfile, starIndex: number, event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -297,6 +338,9 @@ export function VideoStars({
               "--popover-left": `${popoverPosition.left}px`,
               "--popover-width": `${popoverPosition.width}px`,
               "--popover-max-height": `${popoverPosition.maxHeight}px`,
+              "--popover-min-height": popoverPosition.minHeight
+                ? `${popoverPosition.minHeight}px`
+                : undefined,
             } as CSSProperties}
           >
             <div className={styles.toolbar}>

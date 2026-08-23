@@ -11,8 +11,9 @@ import {
 import { createPortal } from "react-dom";
 import { StarPortrait } from "@/components/StarPortrait";
 import { VideoCard } from "@/components/VideoCard";
-import { getStarSlugsForVideo, type StarProfile } from "@/data/stars";
-import { videos } from "@/data/videos";
+import { type StarProfile } from "@/data/stars";
+import { getVideosForStar } from "@/data/starVideoIndex";
+import { viewportWidth } from "@/lib/viewport";
 import type {
   DisplayPreferences,
   StarCardPreferences,
@@ -42,8 +43,9 @@ const remoteKeys: Record<number, string> = {
 };
 
 function directoryColumns(tvMode: boolean, preferredColumns: number): number {
-  if (tvMode || window.innerWidth >= 1024) return preferredColumns;
-  if (window.innerWidth >= 576) return 2;
+  const width = viewportWidth();
+  if (tvMode || width >= 1024) return preferredColumns;
+  if (width >= 576) return 2;
   return 1;
 }
 
@@ -149,12 +151,29 @@ export function StarDirectory({
     };
   }, [activeEntry, closeDrawer, videoTextSize]);
 
-  const relatedVideos = activeEntry
-    ? videos.filter((video) => getStarSlugsForVideo(video.id).includes(activeEntry.profile.slug))
-    : [];
+  const handleDrawerVideoLike = useCallback(
+    (videoId: string) => {
+      if (!onToggleVideoLike(videoId)) closeDrawer(false);
+    },
+    [closeDrawer, onToggleVideoLike],
+  );
+
+  const handleDrawerStarLove = useCallback(
+    (starSlug: string) => {
+      const changed = onToggleStarLove(starSlug);
+      if (!changed) closeDrawer(false);
+      return changed;
+    },
+    [closeDrawer, onToggleStarLove],
+  );
+
+  const relatedVideos = activeEntry ? getVideosForStar(activeEntry.profile.slug) : [];
+  // The drawer is narrower than the catalogue, so it fits one fewer video per
+  // row than the main grid preference.
+  const drawerColumns = Math.max(1, videoColumns - 1);
   const displayedVideos = showAllVideos
     ? relatedVideos
-    : relatedVideos.slice(0, videoColumns * 2);
+    : relatedVideos.slice(0, drawerColumns * 2);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const key = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", "OK", "Select", "Accept"].includes(event.key)
@@ -195,6 +214,10 @@ export function StarDirectory({
     nextCard?.focus();
     nextCard?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
   };
+
+  // Drop refs for cards that no longer exist, otherwise a shrinking filtered
+  // list leaves detached nodes referenced and focus restore targets the wrong card.
+  cardRefs.current.length = entries.length;
 
   return (
     <div ref={gridRef} className={styles.grid} role="list" aria-label="Featured stars">
@@ -320,7 +343,7 @@ export function StarDirectory({
                 className={styles.drawerVideoGrid}
                 role="list"
                 data-video-text-size={videoTextSize}
-                style={{ "--drawer-video-columns": videoColumns } as CSSProperties}
+                style={{ "--drawer-video-columns": drawerColumns } as CSSProperties}
               >
                 {displayedVideos.map((video, index) => (
                   <VideoCard
@@ -328,17 +351,11 @@ export function StarDirectory({
                     video={video}
                     index={index}
                     liked={likedVideoIds.has(video.id)}
-                    onToggleLike={() => {
-                      if (!onToggleVideoLike(video.id)) closeDrawer(false);
-                    }}
+                    onToggleLike={handleDrawerVideoLike}
                     lovedStarSlugs={lovedStarSlugs}
-                    onToggleStarLove={(starSlug) => {
-                      const changed = onToggleStarLove(starSlug);
-                      if (!changed) closeDrawer(false);
-                      return changed;
-                    }}
+                    onToggleStarLove={handleDrawerStarLove}
                     metadata={videoMetadata}
-                    priority={index < videoColumns}
+                    priority={index < drawerColumns}
                   />
                 ))}
               </div>

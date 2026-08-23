@@ -18,9 +18,12 @@ export type VideoItem = {
   preview: string;
   href: string;
   accent: string;
+  /** Precomputed lowercase haystack; rebuilding it per keystroke is the
+   *  single hottest cost in catalogue search. */
+  searchText: string;
 };
 
-type VideoSeed = Omit<VideoItem, "id">;
+type VideoSeed = Omit<VideoItem, "id" | "searchText">;
 
 const seeds: VideoSeed[] = [
   {
@@ -312,12 +315,16 @@ const editions = [
 export const videos: VideoItem[] = Array.from({ length: 180 }, (_, index) => {
   const seed = seeds[index % seeds.length];
   const cycle = Math.floor(index / seeds.length);
+  const title = cycle === 0 ? seed.title : `${seed.title} · ${editions[cycle - 1]}`;
 
   return {
     ...seed,
     id: `video-${String(index + 1).padStart(3, "0")}`,
-    title: cycle === 0 ? seed.title : `${seed.title} · ${editions[cycle - 1]}`,
+    title,
     likeCount: Math.max(50, seed.likeCount - cycle * 137),
+    searchText:
+      `${title} ${seed.creator} ${seed.platform} ${seed.category} ${seed.tags.join(" ")} ${seed.mood}`
+        .toLowerCase(),
   };
 });
 

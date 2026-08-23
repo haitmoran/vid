@@ -51,9 +51,14 @@ function validateEmail(email: string): void {
 function readUsers(): StoredUser[] {
   try {
     const raw = window.localStorage.getItem(USERS_KEY);
-    return raw ? (JSON.parse(raw) as StoredUser[]) : [];
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    // Unreadable, blocked, or corrupt account storage must never break the
+    // site. Callers treat this as "no accounts on this device"; the next
+    // successful write replaces the damaged value.
+    return Array.isArray(parsed) ? (parsed as StoredUser[]) : [];
   } catch {
-    throw new Error("Account storage is unavailable in this browser.");
+    return [];
   }
 }
 
@@ -116,17 +121,26 @@ function toSession(user: StoredUser): SessionUser {
 }
 
 function saveSession(user: StoredUser): SessionUser {
-  window.sessionStorage.setItem(SESSION_KEY, user.normalizedUsername);
+  try {
+    window.sessionStorage.setItem(SESSION_KEY, user.normalizedUsername);
+  } catch {
+    // The sign-in still applies to this page even if it cannot be persisted.
+  }
   return toSession(user);
 }
 
 export function getSession(): SessionUser | null {
-  const normalizedUsername = window.sessionStorage.getItem(SESSION_KEY);
+  let normalizedUsername: string | null = null;
+  try {
+    normalizedUsername = window.sessionStorage.getItem(SESSION_KEY);
+  } catch {
+    return null;
+  }
   if (!normalizedUsername) return null;
 
   const user = readUsers().find((candidate) => candidate.normalizedUsername === normalizedUsername);
   if (!user) {
-    window.sessionStorage.removeItem(SESSION_KEY);
+    signOut();
     return null;
   }
 
@@ -134,7 +148,11 @@ export function getSession(): SessionUser | null {
 }
 
 export function signOut(): void {
-  window.sessionStorage.removeItem(SESSION_KEY);
+  try {
+    window.sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing to clear when storage is unavailable.
+  }
 }
 
 export async function registerAccount(input: {
@@ -295,10 +313,15 @@ export function saveLikedVideoIds(
   normalizedUsername: string,
   videoIds: Set<string>,
 ): void {
-  window.localStorage.setItem(
-    `${LIKES_PREFIX}${normalizedUsername}`,
-    JSON.stringify([...videoIds]),
-  );
+  try {
+    window.localStorage.setItem(
+      `${LIKES_PREFIX}${normalizedUsername}`,
+      JSON.stringify([...videoIds]),
+    );
+  } catch {
+    // A full or blocked store must not break the like button; the choice
+    // still applies for this session.
+  }
 }
 
 export function getLovedStarSlugs(normalizedUsername: string): Set<string> {
@@ -316,8 +339,12 @@ export function saveLovedStarSlugs(
   normalizedUsername: string,
   starSlugs: Set<string>,
 ): void {
-  window.localStorage.setItem(
-    `${LOVED_STARS_PREFIX}${normalizedUsername}`,
-    JSON.stringify([...starSlugs]),
-  );
+  try {
+    window.localStorage.setItem(
+      `${LOVED_STARS_PREFIX}${normalizedUsername}`,
+      JSON.stringify([...starSlugs]),
+    );
+  } catch {
+    // See saveLikedVideoIds.
+  }
 }

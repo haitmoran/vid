@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -22,6 +23,9 @@ export type VideoCardAction = "star-0" | "star-1" | "open" | "like";
 const callbacks = new WeakMap<Element, VisibilityCallback>();
 let observer: IntersectionObserver | null = null;
 let observerTargets = 0;
+/** How long hover or focus must rest on a card before its preview mounts. */
+const PREVIEW_SETTLE_MS = 320;
+
 const compactNumber = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumFractionDigits: 1,
@@ -74,20 +78,31 @@ type VideoCardProps = {
   video: VideoItem;
   index: number;
   liked: boolean;
-  onToggleLike: () => void;
+  onToggleLike: (videoId: string) => void;
   lovedStarSlugs: ReadonlySet<string>;
   onToggleStarLove: (starSlug: string) => boolean;
   metadata: VideoMetadataPreferences;
   priority?: boolean;
-  tabIndex?: number;
-  onKeyDown?: KeyboardEventHandler<HTMLAnchorElement>;
-  likeTabIndex?: number;
-  onLikeKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
-  starTabIndexes?: readonly [number, number];
-  onStarKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
+  /**
+   * Roving tabindex inputs. These are primitives rather than per-card arrays
+   * or closures so that memoisation holds: moving focus re-renders only the
+   * card losing focus and the card gaining it, not the whole grid.
+   */
+  tvMode?: boolean;
+  focusedAction?: VideoCardAction | null;
+  onCardKeyDown?: KeyboardEventHandler<HTMLElement>;
 };
 
-export function VideoCard({
+function tabIndexFor(
+  tvMode: boolean,
+  focusedAction: VideoCardAction | null,
+  action: VideoCardAction,
+): number {
+  if (!tvMode) return 0;
+  return focusedAction === action ? 0 : -1;
+}
+
+function VideoCardComponent({
   video,
   index,
   liked,
@@ -96,17 +111,15 @@ export function VideoCard({
   onToggleStarLove,
   metadata,
   priority = false,
-  tabIndex = 0,
-  onKeyDown,
-  likeTabIndex = 0,
-  onLikeKeyDown,
-  starTabIndexes,
-  onStarKeyDown,
+  tvMode = false,
+  focusedAction = null,
+  onCardKeyDown,
 }: VideoCardProps) {
   const cardRef = useRef<HTMLAnchorElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const intents = useRef(new Set<Intent>());
   const longPressTimer = useRef<number | null>(null);
+  const settleTimer = useRef<number | null>(null);
   const lastTouchAt = useRef(0);
   const suppressClick = useRef(false);
 
@@ -123,23 +136,49 @@ export function VideoCard({
     }
   }, []);
 
+  const clearSettleTimer = useCallback(() => {
+    if (settleTimer.current !== null) {
+      window.clearTimeout(settleTimer.current);
+      settleTimer.current = null;
+    }
+  }, []);
+
   const addIntent = useCallback(
     (intent: Intent): boolean => {
       if (!video.preview || previewFailed || !previewIsAllowed()) return false;
 
       intents.current.add(intent);
-      setHasIntent(true);
+
+      // A long press is deliberate, so honour it at once. Hover and focus are
+      // not: sweeping a pointer across the grid, or walking a TV remote along
+      // a row, would otherwise start and tear down a video decode on every
+      // card it passes. TV decoders handle only a couple of streams at a time.
+      if (intent === "press") {
+        clearSettleTimer();
+        setHasIntent(true);
+        return true;
+      }
+
+      if (settleTimer.current === null) {
+        settleTimer.current = window.setTimeout(() => {
+          settleTimer.current = null;
+          if (intents.current.size > 0) setHasIntent(true);
+        }, PREVIEW_SETTLE_MS);
+      }
       return true;
     },
-    [previewFailed, video.preview],
+    [clearSettleTimer, previewFailed, video.preview],
   );
 
   const removeIntent = useCallback((intent: Intent) => {
     intents.current.delete(intent);
     const active = intents.current.size > 0;
-    setHasIntent(active);
-    if (!active) setPreviewReady(false);
-  }, []);
+    if (!active) {
+      clearSettleTimer();
+      setPreviewReady(false);
+    }
+    setHasIntent(active && settleTimer.current === null);
+  }, [clearSettleTimer]);
 
   useEffect(() => {
     const element = cardRef.current;
@@ -152,13 +191,17 @@ export function VideoCard({
         setHasEnteredViewport(true);
       } else {
         intents.current.clear();
+        clearSettleTimer();
         setHasIntent(false);
         setPreviewReady(false);
       }
     });
   }, []);
 
-  useEffect(() => clearLongPress, [clearLongPress]);
+  useEffect(() => () => {
+    clearLongPress();
+    clearSettleTimer();
+  }, [clearLongPress, clearSettleTimer]);
 
   const handlePointerLeave = (
     event: ReactPointerEvent<HTMLAnchorElement>,
@@ -188,6 +231,11 @@ export function VideoCard({
     clearLongPress();
     removeIntent("press");
   };
+
+  const handleToggleLike = useCallback(
+    () => onToggleLike(video.id),
+    [onToggleLike, video.id],
+  );
 
   const handleClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (suppressClick.current) {
@@ -245,12 +293,12 @@ export function VideoCard({
         href={video.href}
         target="_blank"
         rel="noopener noreferrer nofollow"
-        tabIndex={tabIndex}
+        tabIndex={tabIndexFor(tvMode, focusedAction, "open")}
         data-video-index={index}
         data-card-action="open"
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter"
         aria-label={`${video.title}. ${video.creator} on ${video.platform}. ${compactNumber.format(video.likeCount)} likes. Duration ${video.duration}.`}
-        onKeyDown={onKeyDown}
+        onKeyDown={onCardKeyDown}
         onMouseEnter={() => {
           if (Date.now() - lastTouchAt.current > 750) addIntent("hover");
         }}
@@ -357,8 +405,11 @@ export function VideoCard({
           lovedStarSlugs={lovedStarSlugs}
           onToggleStarLove={onToggleStarLove}
           videoIndex={index}
-          tabIndexes={starTabIndexes}
-          onStarKeyDown={onStarKeyDown}
+          tabIndexes={[
+            tabIndexFor(tvMode, focusedAction, "star-0"),
+            tabIndexFor(tvMode, focusedAction, "star-1"),
+          ]}
+          onStarKeyDown={onCardKeyDown}
         />
       )}
 
@@ -370,11 +421,11 @@ export function VideoCard({
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter"
         data-focus-label={liked ? "Remove love" : "Love video"}
         title={liked ? "Remove from loved videos" : "Love this video"}
-        tabIndex={likeTabIndex}
+        tabIndex={tabIndexFor(tvMode, focusedAction, "like")}
         data-video-index={index}
         data-card-action="like"
-        onKeyDown={onLikeKeyDown}
-        onClick={onToggleLike}
+        onKeyDown={onCardKeyDown}
+        onClick={handleToggleLike}
       >
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path d="M12 20.3 4.2 12.8A4.8 4.8 0 0 1 11 6l1 1 1-1a4.8 4.8 0 0 1 6.8 6.8L12 20.3Z" />
@@ -383,3 +434,9 @@ export function VideoCard({
     </article>
   );
 }
+
+/**
+ * The catalogue mounts up to 180 cards. Without this, every keystroke, focus
+ * move, and incremental load re-rendered all of them.
+ */
+export const VideoCard = memo(VideoCardComponent);
