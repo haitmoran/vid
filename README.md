@@ -2,7 +2,7 @@
 
 A high-performance video aggregation interface built with Next.js, React, and TypeScript.
 
-**Live demo:** https://haitmoran.github.io/k/
+**Live demo:** https://haitmoran.github.io/vid/
 
 ## Features
 

@@ -4,7 +4,7 @@
  * the repository is a single-line change instead of a hunt through the app,
  * the layout, the static routes and the Next.js config.
  */
-export const REPO_BASE_PATH = "/k";
+export const REPO_BASE_PATH = "/vid";
 
 /** Empty for local development and any host that serves from the domain root. */
 export const basePath =
